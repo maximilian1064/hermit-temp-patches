@@ -1,0 +1,55 @@
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index 2a7f2ed..754511c 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -295,7 +295,8 @@ ssize_t sys_sbrk(ssize_t incr)
+ 			// region is already reserved for the heap, we have to change the
+ 			// property
+ 			vma_free(PAGE_CEIL(ret), PAGE_FLOOR(heap->end));
+-			vma_add(PAGE_CEIL(ret), PAGE_FLOOR(heap->end), VMA_HEAP|VMA_USER);
++			vma_add(PAGE_CEIL(ret), PAGE_FLOOR(heap->end), VMA_HEAP|VMA_USER|VMA_HBMEM);
++            /*vma_dump();*/
+ 		}
+ 	} else ret = -ENOMEM;
+ 
+diff --git a/mm/vma.c b/mm/vma.c
+index 24d5921..45f359e 100644
+--- a/mm/vma.c
++++ b/mm/vma.c
+@@ -272,10 +272,11 @@ void vma_dump(void)
+ {
+ 	void print_vma(vma_t *vma) {
+ 		while (vma) {
+-			LOG_INFO("0x%lx - 0x%lx: size=0x%x, flags=%c%c%c%s\n", vma->start, vma->end, vma->end - vma->start,
++			LOG_INFO("0x%lx - 0x%lx: size=0x%x, flags=%c%c%c%c%s\n", vma->start, vma->end, vma->end - vma->start,
+ 				(vma->flags & VMA_READ) ? 'r' : '-',
+ 				(vma->flags & VMA_WRITE) ? 'w' : '-',
+ 				(vma->flags & VMA_EXECUTE) ? 'x' : '-',
++				(vma->flags & VMA_HBMEM) ? 'h' : '-',
+ 				(vma->flags & VMA_CACHEABLE) ? "" : " (uncached)");
+ 			vma = vma->next;
+ 		}
+@@ -310,9 +311,23 @@ vma_t* find_vma(size_t viraddr)
+         if(!vma)
+             goto not_found;
+ 
++        LOG_INFO("VMA for viraddr %lx => 0x%lx - 0x%lx: size=0x%x, flags=%c%c%c%c%s\n", viraddr, vma->start, vma->end, vma->end - vma->start,
++                (vma->flags & VMA_READ) ? 'r' : '-',
++                (vma->flags & VMA_WRITE) ? 'w' : '-',
++                (vma->flags & VMA_EXECUTE) ? 'x' : '-',
++                (vma->flags & VMA_HBMEM) ? 'h' : '-',
++                (vma->flags & VMA_CACHEABLE) ? "" : " (uncached)");
++
+         // update vma cache if vma found
+         vma_cache = vma;
+     }
++    LOG_INFO("vma_cache for viraddr %lx => 0x%lx - 0x%lx: size=0x%x, flags=%c%c%c%c%s\n", viraddr, vma_cache->start, vma_cache->end, vma_cache->end - vma_cache->start,
++            (vma->flags & VMA_READ) ? 'r' : '-',
++            (vma->flags & VMA_WRITE) ? 'w' : '-',
++            (vma->flags & VMA_EXECUTE) ? 'x' : '-',
++            (vma->flags & VMA_HBMEM) ? 'h' : '-',
++            (vma->flags & VMA_CACHEABLE) ? "" : " (uncached)");
++
+ 
+ 	spinlock_irqsave_unlock(lock);
+     return vma;

@@ -1,0 +1,96 @@
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index 13fcc42..ba3e684 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -300,6 +300,9 @@ ssize_t sys_sbrk(ssize_t incr)
+ 		}
+ 	} else ret = -ENOMEM;
+ 
++	/*LOG_INFO("sbrk: old = %#lx, new = %#lx\n", PAGE_CEIL(ret), PAGE_FLOOR(heap->end) );*/
++    /*vma_dump();*/
++
+ 	// allocation and mapping of new pages for the heap
+ 	// is catched by the pagefault handler
+ 
+@@ -335,6 +338,9 @@ ssize_t sys_hbmem_sbrk(ssize_t incr)
+ 		}
+ 	} else ret = -ENOMEM;
+ 
++	/*LOG_INFO("sbrk: old = %#lx, new = %#lx\n", PAGE_CEIL(ret), PAGE_FLOOR(heap->end) );*/
++    /*vma_dump();*/
++
+ 	// allocation and mapping of new pages for the heap
+ 	// is catched by the pagefault handler
+ 
+diff --git a/mm/vma.c b/mm/vma.c
+index 912fda5..01cdd10 100644
+--- a/mm/vma.c
++++ b/mm/vma.c
+@@ -83,7 +83,7 @@ size_t vma_alloc(size_t size, uint32_t flags)
+ 	spinlock_irqsave_t* lock = &vma_lock;
+ 	vma_t** list = &vma_list;
+ 
+-	LOG_DEBUG("vma_alloc: size = %#lx, flags = %#x\n", size, flags);
++	LOG_INFO("vma_alloc: size = %#lx, flags = %#x\n", size, flags);
+ 
+ 	// boundaries of free gaps
+ 	size_t start, end;
+@@ -149,7 +149,7 @@ int vma_free(size_t start, size_t end)
+ 	vma_t* vma;
+ 	vma_t** list = &vma_list;
+ 
+-	LOG_DEBUG("vma_free: start = %#lx, end = %#lx\n", start, end);
++	LOG_INFO("vma_free: start = %#lx, end = %#lx\n", start, end);
+ 
+ 	if (BUILTIN_EXPECT(start >= end, 0))
+ 		return -EINVAL;
+@@ -214,7 +214,7 @@ int vma_add(size_t start, size_t end, uint32_t flags)
+ 	if (BUILTIN_EXPECT(start >= end, 0))
+ 		return -EINVAL;
+ 
+-	LOG_DEBUG("vma_add: start = %#lx, end = %#lx, flags = %#x\n", start, end, flags);
++	LOG_INFO("vma_add: start = %#lx, end = %#lx, flags = %#x\n", start, end, flags);
+ 
+ 	spinlock_irqsave_lock(lock);
+ 
+@@ -271,10 +271,11 @@ void vma_dump(void)
+ {
+ 	void print_vma(vma_t *vma) {
+ 		while (vma) {
+-			LOG_INFO("0x%lx - 0x%lx: size=0x%x, flags=%c%c%c%s\n", vma->start, vma->end, vma->end - vma->start,
++			LOG_INFO("0x%lx - 0x%lx: size=0x%x, flags=%c%c%c%c%s\n", vma->start, vma->end, vma->end - vma->start,
+ 				(vma->flags & VMA_READ) ? 'r' : '-',
+ 				(vma->flags & VMA_WRITE) ? 'w' : '-',
+ 				(vma->flags & VMA_EXECUTE) ? 'x' : '-',
++				(vma->flags & VMA_HBMEM) ? 'h' : '-',
+ 				(vma->flags & VMA_CACHEABLE) ? "" : " (uncached)");
+ 			vma = vma->next;
+ 		}
+@@ -309,9 +310,27 @@ vma_t* find_vma(size_t viraddr)
+         if(!vma)
+             goto not_found;
+ 
++        LOG_INFO("VMA for viraddr %lx => 0x%lx - 0x%lx: size=0x%x, flags=%c%c%c%c%c%c%s\n", viraddr, vma->start, vma->end, vma->end - vma->start,
++                (vma->flags & VMA_READ) ? 'r' : '-',
++                (vma->flags & VMA_WRITE) ? 'w' : '-',
++                (vma->flags & VMA_EXECUTE) ? 'x' : '-',
++                (vma->flags & VMA_HBMEM) ? 'h' : '-',
++                (vma->flags & VMA_NO_ACCESS) ? 'n' : '-',
++                (vma->flags & VMA_USER) ? 'u' : '-',
++                (vma->flags & VMA_CACHEABLE) ? "" : " (uncached)");
++
+         // update vma cache if vma found
+         vma_cache = vma;
+     }
++    LOG_INFO("vma_cache for viraddr %lx => 0x%lx - 0x%lx: size=0x%x, flags=%c%c%c%c%c%c%s\n", viraddr, vma_cache->start, vma_cache->end, vma_cache->end - vma_cache->start,
++            (vma->flags & VMA_READ) ? 'r' : '-',
++            (vma->flags & VMA_WRITE) ? 'w' : '-',
++            (vma->flags & VMA_EXECUTE) ? 'x' : '-',
++            (vma->flags & VMA_HBMEM) ? 'h' : '-',
++            (vma->flags & VMA_NO_ACCESS) ? 'n' : '-',
++            (vma->flags & VMA_USER) ? 'u' : '-',
++            (vma->flags & VMA_CACHEABLE) ? "" : " (uncached)");
++
+ 
+ 	spinlock_irqsave_unlock(lock);
+     return vma;

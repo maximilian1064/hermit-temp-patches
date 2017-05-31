@@ -1,0 +1,41 @@
+diff --git a/mm/vma.c b/mm/vma.c
+index 540aba4..1f9aed8 100644
+--- a/mm/vma.c
++++ b/mm/vma.c
+@@ -271,10 +271,11 @@ void vma_dump(void)
+ {
+ 	void print_vma(vma_t *vma) {
+ 		while (vma) {
+-			LOG_INFO("0x%lx - 0x%lx: size=0x%x, flags=%c%c%c%s\n", vma->start, vma->end, vma->end - vma->start,
++			LOG_INFO("0x%lx - 0x%lx: size=0x%x, flags=%c%c%c%c%s\n", vma->start, vma->end, vma->end - vma->start,
+ 				(vma->flags & VMA_READ) ? 'r' : '-',
+ 				(vma->flags & VMA_WRITE) ? 'w' : '-',
+ 				(vma->flags & VMA_EXECUTE) ? 'x' : '-',
++				(vma->flags & VMA_HBMEM) ? 'h' : '-',
+ 				(vma->flags & VMA_CACHEABLE) ? "" : " (uncached)");
+ 			vma = vma->next;
+ 		}
+@@ -309,9 +310,23 @@ vma_t* find_vma(size_t viraddr)
+         if(!vma)
+             goto not_found;
+ 
++        LOG_INFO("VMA for viraddr %lx => 0x%lx - 0x%lx: size=0x%x, flags=%c%c%c%c%s\n", viraddr, vma->start, vma->end, vma->end - vma->start,
++                (vma->flags & VMA_READ) ? 'r' : '-',
++                (vma->flags & VMA_WRITE) ? 'w' : '-',
++                (vma->flags & VMA_EXECUTE) ? 'x' : '-',
++                (vma->flags & VMA_HBMEM) ? 'h' : '-',
++                (vma->flags & VMA_CACHEABLE) ? "" : " (uncached)");
++
+         // update vma cache if vma found
+         vma_cache = vma;
+     }
++    LOG_INFO("vma_cache for viraddr %lx => 0x%lx - 0x%lx: size=0x%x, flags=%c%c%c%c%s\n", viraddr, vma_cache->start, vma_cache->end, vma_cache->end - vma_cache->start,
++            (vma->flags & VMA_READ) ? 'r' : '-',
++            (vma->flags & VMA_WRITE) ? 'w' : '-',
++            (vma->flags & VMA_EXECUTE) ? 'x' : '-',
++            (vma->flags & VMA_HBMEM) ? 'h' : '-',
++            (vma->flags & VMA_CACHEABLE) ? "" : " (uncached)");
++
+ 
+ 	spinlock_irqsave_unlock(lock);
+     return vma;

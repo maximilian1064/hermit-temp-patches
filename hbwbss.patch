@@ -1,0 +1,26 @@
+diff --git a/include/hermit/memory.h b/include/hermit/memory.h
+index 89ed45f..d3df1a5 100644
+--- a/include/hermit/memory.h
++++ b/include/hermit/memory.h
+@@ -84,4 +84,7 @@ int is_hbmem_available(void);
+ /** @brief Initialize the high bandwidth memory subsystem */
+ int hbmemory_init(void);
+ 
++/** @remap bss to high bandwidth memory subsystem */
++int mv_bss(void);
++
+ #endif
+diff --git a/kernel/main.c b/kernel/main.c
+index 1b8d151..ef72b43 100644
+--- a/kernel/main.c
++++ b/kernel/main.c
+@@ -573,6 +573,9 @@ int hermit_main(void)
+ 	hermit_init();
+ 	system_calibration(); // enables also interrupts
+ 
++    
++    mv_bss(); // remap bss to hbmem region
++
+ 	LOG_INFO("This is Hermit %s, build date %u\n", PACKAGE_VERSION, &__DATE__);
+ 	LOG_INFO("Isle %d of %d possible isles\n", isle, possible_isles);
+ 	LOG_INFO("Kernel starts at %p and ends at %p\n", &kernel_start, (size_t)&kernel_start + image_size);

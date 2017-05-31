@@ -1,0 +1,49 @@
+diff --git a/kernel/main.c b/kernel/main.c
+index 1b8d151..b030897 100644
+--- a/kernel/main.c
++++ b/kernel/main.c
+@@ -568,6 +568,44 @@ out:
+ 	return 0;
+ }
+ 
++#if 1
++static int mv_bss(void)
++{
++    size_t bss_size = (size_t) &kernel_start + image_size - (size_t) &__bss_start;
++    uint32_t npages = PAGE_2M_FLOOR(bss_size) >> PAGE_2M_BITS;
++
++    size_t viraddr = (size_t) &__bss_start;
++
++    size_t phyaddr = virt_to_phys( viraddr );
++    size_t hbmem_phyaddr;
++    /*LOG_DEBUG("destroy_stack(0x%zx) (size 0x%zx)\n", viraddr, DEFAULT_STACK_SIZE);*/
++
++    /*if (BUILTIN_EXPECT(!viraddr, 0))*/
++        /*return -EINVAL;*/
++    /*if (BUILTIN_EXPECT(!sz, 0))*/
++        /*return -EINVAL;*/
++
++    /*phyaddr = virt_to_phys((size_t)viraddr);*/
++    /*if (BUILTIN_EXPECT(!phyaddr, 0))*/
++        /*return -ENOMEM;*/
++
++    // unmap bss 
++    page_unmap( viraddr, npages);
++    put_pages(phyaddr, npages);
++
++    // remap bss to hbmem region
++    hbmem_phyaddr = hbmem_get_pages(npages);
++
++    // temp flags...
++    size_t flags = PG_USER | PG_RW | PG_PSE | PG_PRESENT;
++    __page_map( viraddr, hbmem_phyaddr, npages, flags, 0 );
++
++    return 0;
++
++}
++#endif
++
++
+ int hermit_main(void)
+ {
+ 	hermit_init();

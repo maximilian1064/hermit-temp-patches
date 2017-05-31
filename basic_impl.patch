@@ -1,0 +1,198 @@
+diff --git a/arch/x86/kernel/entry.asm b/arch/x86/kernel/entry.asm
+index 028ed97..66b176f 100644
+--- a/arch/x86/kernel/entry.asm
++++ b/arch/x86/kernel/entry.asm
+@@ -117,6 +117,15 @@ start64:
+     ; store pointer to the multiboot information
+     mov [mb_info], QWORD rdx
+ 
++    ; [for test only]: create pseudo hbmem
++    mov rdx, QWORD [limit]
++    sub rdx, 0x10000000
++    mov QWORD [limit], rdx
++    mov [hbmem_base], rdx
++    mov rdx, 0x10000000
++    mov [hbmem_size], rdx 
++
++
+     ; reset registers to kill any stale realmode selectors
+     xor eax, eax
+     mov ds, eax
+diff --git a/arch/x86/mm/page.c b/arch/x86/mm/page.c
+index 773f8f3..ca306f6 100644
+--- a/arch/x86/mm/page.c
++++ b/arch/x86/mm/page.c
+@@ -41,6 +41,7 @@
+ #include <hermit/spinlock.h>
+ #include <hermit/tasks.h>
+ #include <hermit/logging.h>
++#include <hermit/vma.h>
+ 
+ #include <asm/multiboot.h>
+ #include <asm/irq.h>
+@@ -271,7 +272,14 @@ void page_fault_handler(struct state *s)
+ 		 // on demand userspace heap mapping
+ 		viraddr &= PAGE_MASK;
+ 
+-		size_t phyaddr = expect_zeroed_pages ? get_zeroed_page() : get_page();
++        // check if we need to map the page to high-bandwidth memory
++        vma_t* vma = find_vma(viraddr);
++        size_t phyaddr;
++        if(vma && vma->flags & VMA_HBMEM)
++            phyaddr = hbmem_get_pages(1);
++        else
++            phyaddr = expect_zeroed_pages ? get_zeroed_page() : get_page();
++
+ 		if (BUILTIN_EXPECT(!phyaddr, 0)) {
+ 			LOG_ERROR("out of memory: task = %u\n", task->id);
+ 			goto default_handler;
+diff --git a/include/hermit/syscall.h b/include/hermit/syscall.h
+index dc78bee..07862ad 100644
+--- a/include/hermit/syscall.h
++++ b/include/hermit/syscall.h
+@@ -92,6 +92,7 @@ int sys_rcce_fini(int session_id);
+ void sys_yield(void);
+ int sys_kill(tid_t dest, int signum);
+ int sys_signal(signal_handler_t handler);
++ssize_t sys_hbmem_sbrk(ssize_t incr);
+ 
+ struct ucontext;
+ typedef struct ucontext ucontext_t;
+@@ -131,6 +132,7 @@ int setcontext(ucontext_t *ucp);
+ #define __NR_clone		27
+ #define __NR_sem_cancelablewait	28
+ #define __NR_get_ticks		29
++#define __NR_hbmem_sbrk     30
+ 
+ #ifndef __KERNEL__
+ inline static long
+diff --git a/include/hermit/vma.h b/include/hermit/vma.h
+index 1965f4c..f4c6512 100644
+--- a/include/hermit/vma.h
++++ b/include/hermit/vma.h
+@@ -55,6 +55,8 @@ extern "C" {
+ #define VMA_NO_ACCESS	(1 << 4)
+ /// This VMA should be part of the userspace
+ #define VMA_USER	(1 << 5)
++/// This VMA should be mapped to high-bandwidth memory
++#define VMA_HBMEM	(1 << 6)
+ /// A collection of flags used for the kernel heap (kmalloc)
+ #define VMA_HEAP	(VMA_READ|VMA_WRITE|VMA_CACHEABLE)
+ 
+@@ -141,6 +143,17 @@ int vma_free(size_t start, size_t end);
+ /** @brief Dump information about this task's VMAs into the terminal. */
+ void vma_dump(void);
+ 
++/** @find the vma of a virtual address, used in page fault handler
++ *   for determining which type of memory the address should be
++ *   mapped to
++ *
++ * @param viraddr The virtual address to be checked
++ * @return
++ * - NULL on failure
++ * - Pointer to the vma found
++ */
++vma_t* find_vma(size_t viraddr);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index 36479a2..2a7f2ed 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -307,6 +307,43 @@ ssize_t sys_sbrk(ssize_t incr)
+ 	return ret;
+ }
+ 
++ssize_t sys_hbmem_sbrk(ssize_t incr)
++{
++	ssize_t ret;
++	vma_t* heap = per_core(current_task)->heap;
++	static spinlock_t heap_lock = SPINLOCK_INIT;
++
++	if (BUILTIN_EXPECT(!heap, 0)) {
++		LOG_ERROR("sys_sbrk: missing heap!\n");
++		do_abort();
++	}
++
++	spinlock_lock(&heap_lock);
++
++	ret = heap->end;
++
++	// check heap boundaries
++	if ((heap->end >= HEAP_START) && (heap->end+incr < HEAP_START + HEAP_SIZE)) {
++		heap->end += incr;
++
++		// reserve VMA regions
++		if (PAGE_CEIL(heap->end) > PAGE_CEIL(ret)) {
++			// region is already reserved for the heap, we have to change the
++			// property
++			vma_free(PAGE_CEIL(ret), PAGE_FLOOR(heap->end));
++			vma_add(PAGE_CEIL(ret), PAGE_FLOOR(heap->end), VMA_HEAP|VMA_USER|VMA_HBMEM);
++		}
++	} else ret = -ENOMEM;
++
++	// allocation and mapping of new pages for the heap
++	// is catched by the pagefault handler
++
++	spinlock_unlock(&heap_lock);
++
++	return ret;
++}
++
++
+ typedef struct {
+ 	const char* name;
+ 	int flags;
+diff --git a/mm/vma.c b/mm/vma.c
+index 3f9691a..24d5921 100644
+--- a/mm/vma.c
++++ b/mm/vma.c
+@@ -48,6 +48,7 @@ extern const void kernel_end;
+  */
+ static vma_t vma_boot = { VMA_MIN, VMA_MIN, VMA_HEAP };
+ static vma_t* vma_list = &vma_boot;
++static vma_t* vma_cache = &vma_boot;
+ static spinlock_irqsave_t vma_lock = SPINLOCK_IRQSAVE_INIT;
+ 
+ int vma_init(void)
+@@ -285,3 +286,38 @@ void vma_dump(void)
+ 	print_vma(&vma_boot);
+ 	spinlock_irqsave_unlock(&vma_lock);
+ }
++
++vma_t* find_vma(size_t viraddr)
++{
++    spinlock_irqsave_t* lock = &vma_lock;
++    vma_t* vma;
++
++    spinlock_irqsave_lock(lock);
++
++    // check the vma cache first
++    vma = vma_cache;
++
++    // search in the vma list if we have a cache miss
++    if(!(vma && viraddr >= vma->start && viraddr <= vma->end))
++    {
++        vma = vma_list;
++        while (vma) {
++            if (viraddr >= vma->start && viraddr <= vma->end) break;
++            vma = vma->next;
++        }
++
++        // return NULL if vma not found
++        if(!vma)
++            goto not_found;
++
++        // update vma cache if vma found
++        vma_cache = vma;
++    }
++
++	spinlock_irqsave_unlock(lock);
++    return vma;
++
++not_found:
++    spinlock_irqsave_unlock(lock);
++    return NULL;
++}
